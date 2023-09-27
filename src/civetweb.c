@@ -2919,14 +2919,21 @@ mg_fopen(const struct mg_connection *conn,
 #else
 	/* Linux et al already use unicode. No need to convert. */
 	switch (mode) {
+		int fd;
 	case MG_FOPEN_MODE_READ:
 		filep->access.fp = fopen(path, "r");
 		break;
 	case MG_FOPEN_MODE_WRITE:
-		fopen_s(filep->access.fp, path, "w");
+		fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU);
+		if (fd > 0) {
+			filep->access.fp = fdopen(fd, "w");
+		}
 		break;
 	case MG_FOPEN_MODE_APPEND:
-		fopen_s(filep->access.fp, path, "a");
+		fd = open(path, O_WRONLY | O_CREAT | O_APPEND, S_IRWXU);
+		if (fd > 0) {
+			filep->access.fp = fdopen(fd, "a");
+		}
 		break;
 	}
 
