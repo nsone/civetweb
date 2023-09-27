@@ -2923,10 +2923,10 @@ mg_fopen(const struct mg_connection *conn,
 		filep->access.fp = fopen(path, "r");
 		break;
 	case MG_FOPEN_MODE_WRITE:
-		filep->access.fp = fopen(path, "w");
+		fopen_s(filep->access.fp, path, "w");
 		break;
 	case MG_FOPEN_MODE_APPEND:
-		filep->access.fp = fopen(path, "a");
+		fopen_s(filep->access.fp, path, "a");
 		break;
 	}
 
@@ -15244,7 +15244,12 @@ log_access(const struct mg_connection *conn)
 	const struct mg_request_info *ri;
 	struct mg_file fi;
 	char date[64], src_addr[IP_ADDR_STR_LEN];
+#if defined(REENTRANT_TIME)
+	struct tm _tm;
+	struct tm *tm = &_tm;
+#else
 	struct tm *tm;
+#endif
 
 	const char *referer;
 	const char *user_agent;
@@ -15322,7 +15327,11 @@ log_access(const struct mg_connection *conn)
 
 	/* If we did not get a log message from Lua, create it here. */
 	if (!log_buf[0]) {
+#if defined(REENTRANT_TIME)
+		localtime_r(&conn->conn_birth_time, tm);
+#else
 		tm = localtime(&conn->conn_birth_time);
+#endif
 		if (tm != NULL) {
 			strftime(date, sizeof(date), "%d/%b/%Y:%H:%M:%S %z", tm);
 		} else {
