@@ -2867,6 +2867,34 @@ mg_path_suspicious(const struct mg_connection *conn, const char *path)
 	return 0;
 }
 
+/* Function to open a FILE.
+ * Should be equivalent to fopen except the file mode
+ * for any created file is 0600 instead of 0666.
+ */
+static FILE* fopen_write_safe(const char *path, const char *mode) {
+	int flags = 0;
+	switch (*mode) {
+	// Flag values based on table of values in "man fdopen"
+	case 'a':
+		flags = O_CREAT | O_APPEND;
+		break;
+	case 'w':
+		flags = O_CREAT | O_TRUNC;
+		break;
+	default:
+		return NULL;
+	}
+	if (strlen(mode) > 1 && mode[1] == '+') {
+		flags |= O_RDWR;
+	} else {
+		flags |= O_WRONLY;
+	}
+	int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+	if (fd > -1) {
+		return fdopen(fd, mode);
+	}
+	return NULL;
+}
 
 /* mg_fopen will open a file either in memory or on the disk.
  * The input parameter path is a string in UTF-8 encoding.
@@ -2919,21 +2947,14 @@ mg_fopen(const struct mg_connection *conn,
 #else
 	/* Linux et al already use unicode. No need to convert. */
 	switch (mode) {
-		int fd;
 	case MG_FOPEN_MODE_READ:
 		filep->access.fp = fopen(path, "r");
 		break;
 	case MG_FOPEN_MODE_WRITE:
-		fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU);
-		if (fd > 0) {
-			filep->access.fp = fdopen(fd, "w");
-		}
+		filep->access.fp = fopen_write_safe(path, "w");
 		break;
 	case MG_FOPEN_MODE_APPEND:
-		fd = open(path, O_WRONLY | O_CREAT | O_APPEND, S_IRWXU);
-		if (fd > 0) {
-			filep->access.fp = fdopen(fd, "a");
-		}
+		filep->access.fp = fopen_write_safe(path, "a");
 		break;
 	}
 
@@ -8873,14 +8894,14 @@ modify_passwords_file(const char *fname,
 
 	/* Create the file if does not exist */
 	/* Use of fopen here is OK, since fname is only ASCII */
-	if ((fp = fopen(fname, "a+")) != NULL) {
+	if ((fp = fopen_write_safe(fname, "a+")) != NULL) {
 		(void)fclose(fp);
 	}
 
 	/* Open the given file and temporary file */
 	if ((fp = fopen(fname, "r")) == NULL) {
 		return 0;
-	} else if ((fp2 = fopen(tmp, "w+")) == NULL) {
+	} else if ((fp2 = fopen_write_safe(tmp, "w+")) == NULL) {
 		fclose(fp);
 		return 0;
 	}
