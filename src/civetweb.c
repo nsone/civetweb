@@ -2867,6 +2867,34 @@ mg_path_suspicious(const struct mg_connection *conn, const char *path)
 	return 0;
 }
 
+/* Function to open a FILE.
+ * Should be equivalent to fopen except the file mode
+ * for any created file is 0600 instead of 0666.
+ */
+static FILE* fopen_write_safe(const char *path, const char *mode) {
+	int flags = 0;
+	switch (*mode) {
+	// Flag values based on table of values in "man fdopen"
+	case 'a':
+		flags = O_CREAT | O_APPEND;
+		break;
+	case 'w':
+		flags = O_CREAT | O_TRUNC;
+		break;
+	default:
+		return NULL;
+	}
+	if (strlen(mode) > 1 && mode[1] == '+') {
+		flags |= O_RDWR;
+	} else {
+		flags |= O_WRONLY;
+	}
+	int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+	if (fd > -1) {
+		return fdopen(fd, mode);
+	}
+	return NULL;
+}
 
 /* mg_fopen will open a file either in memory or on the disk.
  * The input parameter path is a string in UTF-8 encoding.
@@ -2923,10 +2951,10 @@ mg_fopen(const struct mg_connection *conn,
 		filep->access.fp = fopen(path, "r");
 		break;
 	case MG_FOPEN_MODE_WRITE:
-		filep->access.fp = fopen(path, "w");
+		filep->access.fp = fopen_write_safe(path, "w");
 		break;
 	case MG_FOPEN_MODE_APPEND:
-		filep->access.fp = fopen(path, "a");
+		filep->access.fp = fopen_write_safe(path, "a");
 		break;
 	}
 
@@ -8866,14 +8894,14 @@ modify_passwords_file(const char *fname,
 
 	/* Create the file if does not exist */
 	/* Use of fopen here is OK, since fname is only ASCII */
-	if ((fp = fopen(fname, "a+")) != NULL) {
+	if ((fp = fopen_write_safe(fname, "a+")) != NULL) {
 		(void)fclose(fp);
 	}
 
 	/* Open the given file and temporary file */
 	if ((fp = fopen(fname, "r")) == NULL) {
 		return 0;
-	} else if ((fp2 = fopen(tmp, "w+")) == NULL) {
+	} else if ((fp2 = fopen_write_safe(tmp, "w+")) == NULL) {
 		fclose(fp);
 		return 0;
 	}
@@ -15244,7 +15272,12 @@ log_access(const struct mg_connection *conn)
 	const struct mg_request_info *ri;
 	struct mg_file fi;
 	char date[64], src_addr[IP_ADDR_STR_LEN];
+#if defined(REENTRANT_TIME)
+	struct tm _tm;
+	struct tm *tm = &_tm;
+#else
 	struct tm *tm;
+#endif
 
 	const char *referer;
 	const char *user_agent;
@@ -15322,7 +15355,11 @@ log_access(const struct mg_connection *conn)
 
 	/* If we did not get a log message from Lua, create it here. */
 	if (!log_buf[0]) {
+#if defined(REENTRANT_TIME)
+		localtime_r(&conn->conn_birth_time, tm);
+#else
 		tm = localtime(&conn->conn_birth_time);
+#endif
 		if (tm != NULL) {
 			strftime(date, sizeof(date), "%d/%b/%Y:%H:%M:%S %z", tm);
 		} else {
